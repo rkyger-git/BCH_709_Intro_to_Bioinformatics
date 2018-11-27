@@ -1,0 +1,75 @@
+---
+title: "Assignment #8 - R notebooks and gapminder with ggplot"
+output: html_notebook
+---
+
+
+```{r}
+#load tidyverse
+library("tidyverse")
+```
+
+
+```{r}
+#load gapminder
+library(gapminder)
+data(gapminder)
+gapminder
+```
+
+
+```{r}
+#summary of gapminder
+summary(gapminder)
+```
+
+```{r}
+#histogram of the populations column (log-transformed), (using hist() and log())
+hist(log(gapminder$pop))
+```
+
+
+```{r}
+#scatterplot of life expectancy (y-axis) vs. log-transformed gdp-per-capita using the base plot() function (and log())
+plot(log(gapminder$gdpPercap),gapminder$lifeExp)
+```
+
+```{r}
+#create a filtered dataset for South Africa and Ireland by life expetancy
+gapminder_SA_and_Ir <- gapminder %>% 
+  filter(country == "South Africa" | country == "Ireland") %>% 
+  select(country, lifeExp)
+
+gapminder_SA_and_Ir
+
+#t-test of life-expectancy differences between South Africa and Ireland
+t.test(data = gapminder_SA_and_Ir, lifeExp ~ country)
+```
+
+
+```{r}
+#Dr. Martin's color-enhanced ggplot single-plot of life expectancy vs. gdp-per-capita, colored by continent, and dot-size by population, with the smooth function
+gapminder %>%
+  filter(gdpPercap < 50000) %>% 
+  ggplot(aes(x=log(gdpPercap), y=lifeExp, color=continent, size=pop)) +
+  geom_point(alpha=0.3) +
+  geom_smooth(method = lm)
+```
+
+
+```{r}
+# Dr. Martin's faceted ggplot scatterplot, colored by year, faceted by continent, with the smooth function
+gapminder %>%
+  filter(gdpPercap < 50000) %>% 
+  ggplot(aes(x=log(gdpPercap), y=lifeExp, color=year, size=pop)) +
+  geom_point(alpha=0.3) +
+  geom_smooth(method = lm) +
+  facet_wrap(~continent)
+```
+
+
+```{r}
+#linear model test of life expectancy by gdp-per-capita and population, with the summary displayed
+summary(lm(gapminder$lifeExp ~ gapminder$gdpPercap + gapminder$pop))
+```
+
