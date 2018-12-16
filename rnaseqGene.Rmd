@@ -1,0 +1,431 @@
+---
+title: "R rnaseqGene"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library("airway")
+```
+
+```{r}
+indir <- system.file("extdata", package="airway", mustWork=TRUE)
+list.files(indir)
+```
+
+```{r}
+csvfile <- file.path(indir, "sample_table.csv")
+sampleTable <- read.csv(csvfile, row.names = 1)
+sampleTable
+```
+
+```{r}
+filenames <- file.path(indir, paste0(sampleTable$Run, "_subset.bam"))
+file.exists(filenames)
+```
+
+```{r}
+library("Rsamtools")
+bamfiles <- BamFileList(filenames, yieldSize=2000000)
+```
+
+```{r}
+seqinfo(bamfiles[1])
+```
+
+```{r}
+library("GenomicFeatures")
+```
+
+```{r}
+gtffile <- file.path(indir,"Homo_sapiens.GRCh37.75_subset.gtf")
+txdb <- makeTxDbFromGFF(gtffile, format = "gtf", circ_seqs = character())
+txdb
+```
+
+```{r}
+ebg <- exonsBy(txdb, by="gene")
+ebg
+```
+
+```{r}
+library("GenomicAlignments")
+library("BiocParallel")
+```
+
+```{r}
+register(SerialParam())
+```
+
+```{r}
+se <- summarizeOverlaps(features=ebg, reads=bamfiles,
+                        mode="Union",
+                        singleEnd=FALSE,
+                        ignore.strand=TRUE,
+                        fragments=TRUE )
+se
+```
+
+```{r}
+dim(se)
+assayNames(se)
+head(assay(se), 3)
+colSums(assay(se))
+rowRanges(se)
+str(metadata(rowRanges(se)))
+
+colData(se)
+colData(se) <- DataFrame(sampleTable)
+colData(se)
+```
+
+```{r}
+se$cell
+se$dex
+```
+
+```{r}
+library("magrittr")
+se$dex %<>% relevel("untrt")
+se$dex
+```
+
+```{r}
+se$dex <- relevel(se$dex, "untrt")
+```
+
+```{r}
+data("airway")
+se <- airway
+```
+
+```{r}
+se$dex %<>% relevel("untrt")
+se$dex
+```
+
+```{r}
+round( colSums(assay(se)) / 1e6, 1 )
+```
+
+```{r}
+colData(se)
+```
+
+```{r}
+library("DESeq2")
+```
+
+```{r}
+dds <- DESeqDataSet(se, design = ~ cell + dex)
+```
+
+```{r}
+countdata <- assay(se)
+head(countdata, 3)
+```
+
+```{r}
+coldata <- colData(se)
+```
+
+```{r}
+ddsMat <- DESeqDataSetFromMatrix(countData = countdata,
+                                  colData = coldata,
+                                  design = ~ cell + dex)
+```
+
+```{r}
+nrow(dds)
+dds <- dds[ rowSums(counts(dds)) > 1, ]
+nrow(dds)
+```
+
+```{r}
+install.packages("hexbin")
+```
+
+
+```{r}
+lambda <- 10^seq(from = -1, to = 2, length = 1000)
+cts <- matrix(rpois(1000*100, lambda), ncol = 100)
+library("vsn")
+meanSdPlot(cts, ranks = FALSE)
+```
+
+```{r}
+log.cts.one <- log2(cts + 1)
+meanSdPlot(log.cts.one, ranks = FALSE)
+```
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+head(assay(vsd), 3)
+```
+
+```{r}
+colData(vsd)
+```
+
+```{r}
+rld <- rlog(dds, blind = FALSE)
+head(assay(rld), 3)
+```
+
+```{r}
+library("dplyr")
+library("ggplot2")
+
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+```
+
+```{r}
+sampleDists <- dist(t(assay(vsd)))
+sampleDists
+```
+
+```{r}
+library("pheatmap")
+library("RColorBrewer")
+```
+
+```{r}
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( vsd$dex, vsd$cell, sep = " - " )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+```{r}
+library("PoiClaClu")
+poisd <- PoissonDistance(t(counts(dds)))
+```
+
+```{r}
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+rownames(samplePoisDistMatrix) <- paste( dds$dex, dds$cell, sep=" - " )
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows = poisd$dd,
+         clustering_distance_cols = poisd$dd,
+         col = colors)
+```
+
+```{r}
+plotPCA(vsd, intgroup = c("dex", "cell"))
+```
+
+```{r}
+pcaData <- plotPCA(vsd, intgroup = c( "dex", "cell"), returnData = TRUE)
+pcaData
+```
+
+```{r}
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+```
+
+```{r}
+ggplot(pcaData, aes(x = PC1, y = PC2, color = dex, shape = cell)) +
+  geom_point(size =3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  coord_fixed()
+```
+
+```{r}
+#section 5
+dds <- DESeq(dds)
+```
+
+```{r}
+res <- results(dds)
+res
+```
+
+```{r}
+res <- results(dds, contrast=c("dex","trt","untrt"))
+```
+
+```{r}
+mcols(res, use.names = TRUE)
+```
+
+```{r}
+summary(res)
+```
+
+```{r}
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+```
+
+```{r}
+resLFC1 <- results(dds, lfcThreshold=1)
+table(resLFC1$padj < 0.1)
+```
+
+```{r}
+results(dds, contrast = c("cell", "N061011", "N61311"))
+```
+
+```{r}
+#section 6
+topGene <- rownames(res)[which.min(res$padj)]
+plotCounts(dds, gene = topGene, intgroup=c("dex"))
+```
+
+```{r}
+library("ggbeeswarm")
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("dex","cell"),
+                         returnData = TRUE)
+ggplot(geneCounts, aes(x = dex, y = count, color = cell)) +
+  scale_y_log10() +  geom_beeswarm(cex = 3)
+```
+
+```{r}
+ggplot(geneCounts, aes(x = dex, y = count, color = cell, group = cell)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()
+```
+
+```{r}
+library("apeglm")
+resultsNames(dds)
+```
+
+```{r}
+res <- lfcShrink(dds, coef="dex_trt_vs_untrt", type="apeglm")
+plotMA(res, ylim = c(-5, 5))
+```
+
+```{r}
+res.noshr <- results(dds, name="dex_trt_vs_untrt")
+plotMA(res.noshr, ylim = c(-5, 5))
+```
+
+```{r}
+plotMA(res, ylim = c(-5,5))
+topGene <- rownames(res)[which.min(res$padj)]
+with(res[topGene, ], {
+  points(baseMean, log2FoldChange, col="dodgerblue", cex=2, lwd=2)
+  text(baseMean, log2FoldChange, topGene, pos=2, col="dodgerblue")
+})
+```
+
+```{r}
+hist(res$pvalue[res$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white")
+```
+
+```{r}
+library("genefilter")
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 20)
+```
+
+```{r}
+mat  <- assay(vsd)[ topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c("cell","dex")])
+pheatmap(mat, annotation_col = anno)
+```
+
+```{r}
+#section 7
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+```
+
+```{r}
+columns(org.Hs.eg.db)
+```
+
+```{r}
+res$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r}
+resOrdered <- res[order(res$pvalue),]
+head(resOrdered)
+```
+
+```{r}
+resOrderedDF <- as.data.frame(resOrdered)[1:100, ]
+write.csv(resOrderedDF, file = "results.csv")
+```
+
+```{r}
+library("ReportingTools")
+htmlRep <- HTMLReport(shortName="report", title="My report",
+                      reportDirectory="./report")
+publish(resOrderedDF, htmlRep)
+url <- finish(htmlRep)
+browseURL(url)
+```
+
+```{r}
+#GLUE
+resLFC1
+```
+
+```{r}
+# attach the gene symbols and entrez IDs to resLFC1 as in Section 7
+resLFC1$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r}
+resLFC1$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r}
+# restrict by the padj <0.1 filter to the resLFC1 results
+resLFC1Sig <- subset(resLFC1, padj < 0.1)
+resLFC1Sig
+```
+
+```{r}
+resLFC1Sig_DF <- resLFC1Sig %>%
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var="Ensembl")
+table(resLFC1Sig_DF$log2FoldChange>0)
+```
+
+```{r}
+# make the Up and Down subsets
+resLFC1Sig_DFup <- subset(resLFC1Sig_DF, log2FoldChange > 0) 
+resLFC1Sig_DFdown <- subset(resLFC1Sig_DF, log2FoldChange < 0) 
+# write the up and down subsets using readr::write_tsv
+library(readr)
+```
+
